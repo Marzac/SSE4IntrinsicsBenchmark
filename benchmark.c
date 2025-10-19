@@ -104,7 +104,7 @@ static inline double now()
 /*****************************************************************************/
 inline void fadeToSSE4(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor)
 {
-    _mm_prefetch((const char*) &frame[0], _MM_HINT_T0);
+    //_mm_prefetch((const char*) &frame[0], _MM_HINT_T0);
     __m128i c = _mm_set1_epi32(color);
 
     // Unpack color to 16-bit lanes (B,G,R,A)
