@@ -20,10 +20,10 @@
 
 static inline double now();
 
-static inline void fadeToBits(uint32_t *frame, size_t size, uint32_t color, uint16_t factor);
-static inline void fadeToArray(uint32_t *frame, size_t size, uint32_t color, uint16_t factor);
-static inline void fadeToUnion(uint32_t *frame, size_t size, uint32_t color, uint16_t factor);
-static inline void fadeToSSE4(uint32_t *frame, size_t size, uint32_t color, uint16_t factor);
+static inline void fadeToBits(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor);
+static inline void fadeToArray(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor);
+static inline void fadeToUnion(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor);
+static inline void fadeToSSE4(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor);
 
 /*****************************************************************************/
 int main(int argc, char * argv[])
@@ -33,8 +33,8 @@ int main(int argc, char * argv[])
     uint32_t * frame = malloc(size * sizeof(uint32_t));
     memset(frame, 0, size * sizeof(uint32_t));
 
-    uint32_t color = 0x80402010;
-    uint16_t factor = 128;
+    uint32_t color = rand();
+    uint16_t factor = rand() & 0xFF;
 
 // Plain C "bits" version
     double t0 = now();
@@ -102,8 +102,9 @@ static inline double now()
 }
 
 /*****************************************************************************/
-inline void fadeToSSE4(uint32_t * frame, size_t size, uint32_t color, uint16_t factor)
+inline void fadeToSSE4(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor)
 {
+    _mm_prefetch((const char*) &frame[0], _MM_HINT_T0);
     __m128i c = _mm_set1_epi32(color);
 
     // Unpack color to 16-bit lanes (B,G,R,A)
@@ -113,7 +114,7 @@ inline void fadeToSSE4(uint32_t * frame, size_t size, uint32_t color, uint16_t f
 
     for (size_t i = 0; i + 4 <= size; i += 4) {
         __m128i pix = _mm_loadu_si128((__m128i *) &frame[i]);
-
+        
     // Unpack pixels to 16-bit lanes
         __m128i lo = _mm_unpacklo_epi8(pix, _mm_setzero_si128());
         __m128i hi = _mm_unpackhi_epi8(pix, _mm_setzero_si128());
@@ -137,22 +138,22 @@ inline void fadeToSSE4(uint32_t * frame, size_t size, uint32_t color, uint16_t f
 }
 
 /*****************************************************************************/
-inline void fadeToBits(uint32_t *frame, size_t size, uint32_t color, uint16_t factor)
+inline void fadeToBits(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor)
 {
-    uint16_t cb = color >> 0;
-    uint16_t cg = color >> 8;
-    uint16_t cr = color >> 16;
-    uint16_t ca = color >> 24;
+    uint16_t cb = (color >> 0) & 0xFF;
+    uint16_t cg = (color >> 8) & 0xFF;
+    uint16_t cr = (color >> 16) & 0xFF;
+    uint16_t ca = (color >> 24) & 0xFF;
 
     uint16_t inv = 256 - factor;
 
     for (size_t i = 0; i < size; i++) {
         uint32_t p = frame[i];
 
-        uint8_t b = p >> 0;
-        uint8_t g = p >> 8;
-        uint8_t r = p >> 16;
-        uint8_t a = p >> 24;
+        uint16_t b = (p >> 0) & 0xFF;
+        uint16_t g = (p >> 8) & 0xFF;
+        uint16_t r = (p >> 16) & 0xFF;
+        uint16_t a = (p >> 24) & 0xFF;
 
         b = cb + (((int)b - cb) * inv >> 8);
         g = cg + (((int)g - cg) * inv >> 8);
@@ -164,9 +165,9 @@ inline void fadeToBits(uint32_t *frame, size_t size, uint32_t color, uint16_t fa
 }
 
 /*****************************************************************************/
-inline void fadeToArray(uint32_t *frame, size_t size, uint32_t color, uint16_t factor)
+inline void fadeToArray(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor)
 {
-    uint8_t *c = (uint8_t *) &color;
+    uint8_t * c = (uint8_t *) &color;
     uint16_t inv = 256 - factor;
 
     for (size_t i = 0; i < size; i++) {
@@ -190,7 +191,7 @@ typedef union {
     };
 } Color;
 
-inline void fadeToUnion(uint32_t *frame, size_t size, uint32_t color, uint16_t factor)
+inline void fadeToUnion(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor)
 {
     Color c;
     c.value = color;
