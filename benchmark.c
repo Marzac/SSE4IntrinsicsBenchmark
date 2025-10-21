@@ -24,6 +24,8 @@ static inline void fadeToBits(uint32_t * restrict frame, size_t size, uint32_t c
 static inline void fadeToArray(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor);
 static inline void fadeToUnion(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor);
 static inline void fadeToSSE4(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor);
+static inline void fadeToSSE4SelfStreamed(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor);
+static inline void fadeToSSE4Streamed(uint32_t * restrict frame2, uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor);
 
 /*****************************************************************************/
 int main(int argc, char * argv[])
@@ -31,6 +33,7 @@ int main(int argc, char * argv[])
 // Allocate working buffer
     size_t size = WIDTH * HEIGHT;
     uint32_t * frame = malloc(size * sizeof(uint32_t));
+    uint32_t * frame2 = malloc(size * sizeof(uint32_t));
     memset(frame, 0, size * sizeof(uint32_t));
 
     uint32_t color = rand();
@@ -60,11 +63,28 @@ int main(int argc, char * argv[])
         fadeToSSE4(frame, size, color, factor);
     double t7 = now();
 
+// SSE4 streamed intrinsics version
+    double t8 = now();
+    for (int i = 0; i < ITERATIONS / 2; i++) {
+        fadeToSSE4Streamed(frame2, frame, size, color, factor);
+        fadeToSSE4Streamed(frame, frame2, size, color, factor);
+    }
+    double t9 = now();
+
+// SSE4 self streamed intrinsics version
+    double t11 = now();
+    for (int i = 0; i < ITERATIONS; i++)
+        fadeToSSE4SelfStreamed(frame, size, color, factor);
+    double t10 = now();
+
+
 // Display results
     double bitsTime = t1 - t0;
     double arrayTime = t3 - t2;
     double unionTime = t5 - t4;
     double sse4Time = t7 - t6;
+    double sse4streamedTime = t9 - t8;
+    double sse4selfstreamedTime = t11 - t10;
 
     printf("Resolution: %dx%d (%zu pixels)\n", WIDTH, HEIGHT, size);
     printf("Iterations: %d\n", ITERATIONS);
@@ -80,6 +100,13 @@ int main(int argc, char * argv[])
            
     printf("SSE4   :%.6f s total (%.6f ms/call)\n",
            sse4Time, (sse4Time / ITERATIONS) * 1000.0);
+
+    printf("SSE4 Streamed   :%.6f s total (%.6f ms/call)\n",
+           sse4streamedTime, (sse4streamedTime / ITERATIONS) * 1000.0);
+
+    printf("SSE4 Self Streamed   :%.6f s total (%.6f ms/call)\n",
+           sse4selfstreamedTime, (sse4selfstreamedTime / ITERATIONS) * 1000.0);
+
 
     printf("Speed-up over bits: %.2fx\n", bitsTime / sse4Time);
     printf("Speed-up over array: %.2fx\n", arrayTime / sse4Time);
@@ -114,7 +141,7 @@ inline void fadeToSSE4(uint32_t * restrict frame, size_t size, uint32_t color, u
 
     for (size_t i = 0; i + 4 <= size; i += 4) {
         __m128i pix = _mm_loadu_si128((__m128i *) &frame[i]);
-        
+	
     // Unpack pixels to 16-bit lanes
         __m128i lo = _mm_unpacklo_epi8(pix, _mm_setzero_si128());
         __m128i hi = _mm_unpackhi_epi8(pix, _mm_setzero_si128());
@@ -135,6 +162,82 @@ inline void fadeToSSE4(uint32_t * restrict frame, size_t size, uint32_t color, u
         __m128i blended = _mm_packus_epi16(lo, hi);
         _mm_storeu_si128((__m128i*) &frame[i], blended);
     }
+}
+
+/*****************************************************************************/
+inline void fadeToSSE4SelfStreamed(uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor)
+{
+    //_mm_prefetch((const char*) &frame[0], _MM_HINT_T0);
+    __m128i c = _mm_set1_epi32(color);
+
+    // Unpack color to 16-bit lanes (B,G,R,A)
+    __m128i c_lo = _mm_unpacklo_epi8(c, _mm_setzero_si128());
+    __m128i c_hi = _mm_unpackhi_epi8(c, _mm_setzero_si128());
+    __m128i f = _mm_set1_epi16((short)(256 - factor));
+
+    for (size_t i = 0; i + 4 <= size; i += 4) {
+        __m128i pix = _mm_loadu_si128((__m128i *) &frame[i]);
+
+    // Unpack pixels to 16-bit lanes
+        __m128i lo = _mm_unpacklo_epi8(pix, _mm_setzero_si128());
+        __m128i hi = _mm_unpackhi_epi8(pix, _mm_setzero_si128());
+
+    // (src - color) * inv_factor
+        lo = _mm_mullo_epi16(_mm_sub_epi16(lo, c_lo), f);
+        hi = _mm_mullo_epi16(_mm_sub_epi16(hi, c_hi), f);
+
+    // Divide by 256 (>> 8)
+        lo = _mm_srli_epi16(lo, 8);
+        hi = _mm_srli_epi16(hi, 8);
+
+    // Add color back
+        lo = _mm_add_epi16(lo, c_lo);
+        hi = _mm_add_epi16(hi, c_hi);
+
+    // Pack back to 8-bit
+        __m128i blended = _mm_packus_epi16(lo, hi);
+        _mm_stream_si128((__m128i*) &frame[i], blended);
+    }
+
+    _mm_sfence();
+}
+
+/*****************************************************************************/
+inline void fadeToSSE4Streamed(uint32_t * restrict frame2, uint32_t * restrict frame, size_t size, uint32_t color, uint16_t factor)
+{
+    //_mm_prefetch((const char*) &frame[0], _MM_HINT_T0);
+    __m128i c = _mm_set1_epi32(color);
+
+    // Unpack color to 16-bit lanes (B,G,R,A)
+    __m128i c_lo = _mm_unpacklo_epi8(c, _mm_setzero_si128());
+    __m128i c_hi = _mm_unpackhi_epi8(c, _mm_setzero_si128());
+    __m128i f = _mm_set1_epi16((short)(256 - factor));
+
+    for (size_t i = 0; i + 4 <= size; i += 4) {
+        __m128i pix = _mm_loadu_si128((__m128i *) &frame[i]);
+        
+    // Unpack pixels to 16-bit lanes
+        __m128i lo = _mm_unpacklo_epi8(pix, _mm_setzero_si128());
+        __m128i hi = _mm_unpackhi_epi8(pix, _mm_setzero_si128());
+
+    // (src - color) * inv_factor
+        lo = _mm_mullo_epi16(_mm_sub_epi16(lo, c_lo), f);
+        hi = _mm_mullo_epi16(_mm_sub_epi16(hi, c_hi), f);
+
+    // Divide by 256 (>> 8)
+        lo = _mm_srli_epi16(lo, 8);
+        hi = _mm_srli_epi16(hi, 8);
+
+    // Add color back
+        lo = _mm_add_epi16(lo, c_lo);
+        hi = _mm_add_epi16(hi, c_hi);
+
+    // Pack back to 8-bit
+        __m128i blended = _mm_packus_epi16(lo, hi);
+        _mm_stream_si128((__m128i*) &frame2[i], blended);
+    }
+
+    _mm_sfence();
 }
 
 /*****************************************************************************/
