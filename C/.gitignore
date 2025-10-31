@@ -1,0 +1,10 @@
+*.d
+*.o
+*.ko
+*.obj
+*.a
+*.s
+*.exe
+*.elf
+*.ilk
+*.map
